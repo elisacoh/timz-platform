@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: timz_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    env:
+      # Test DB runs on service-mapped 5433
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5433/timz_test
+      JWT_SECRET: testsecret
+      TZ: Asia/Jerusalem
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Poetry
+        run: pipx install poetry
+
+      - name: Cache Poetry virtualenv
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pypoetry
+            ~/.cache/pip
+            backend/.venv
+          key: ${{ runner.os }}-poetry-${{ hashFiles('backend/pyproject.toml', 'backend/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-
+
+      - name: Install deps
+        run: poetry install
+
+      # Optional: apply DB migrations if your tests need tables later
+      # - name: Alembic upgrade head
+      #   run: poetry run alembic upgrade head
+
+      - name: Lint
+        run: poetry run make lint
+
+      - name: Tests
+        run: poetry run make test
