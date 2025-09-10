@@ -26,3 +26,5 @@ build/
 .DS_Store
 Thumbs.db
 "@ | Set-Content -Encoding utf8 .gitignore
+
+backend/secrets/*
