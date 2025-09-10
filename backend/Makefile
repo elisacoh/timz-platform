@@ -13,4 +13,6 @@ fmt:
 	black .
 
 test:
-	pytest -q
+	\talembic upgrade head
+	\tpytest -q
+

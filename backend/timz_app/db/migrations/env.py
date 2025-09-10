@@ -1,3 +1,5 @@
+# backend/timz_app/db/migrations/env.py
+
 import os
 import sys
 from logging.config import fileConfig
@@ -8,36 +10,40 @@ from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine.url import make_url
 
-from app.core.config import settings
-# Modèles
-from app.db.base import Base
-
-# Chemin .../backend
-BASE_DIR = Path(__file__).resolve().parents[3]
+# ---- Positionne le sys.path AVANT tout import timz_app.*
+BASE_DIR = Path(__file__).resolve().parents[3]  # .../backend
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Charge explicitement backend/.env (pour Alembic lancé depuis n'importe où)
+# Charge .env ici, avant d'importer settings
 load_dotenv(BASE_DIR / ".env", override=True)
 
-config = context.config
+# Maintenant on peut importer la config et Base
+from timz_app.core.config import settings
+from timz_app.db.base import Base
 
-# Logging
+# Alembic config & logging
+config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
+# ---- Importe explicitement TOUS les modèles pour peupler Base.metadata
+import timz_app.db.base_models  # noqa: F401
 
 target_metadata = Base.metadata
+print("Alembic sqlalchemy.url =", context.config.get_main_option("sqlalchemy.url"))
+print("Models loaded (tables) =", list(target_metadata.tables.keys()))
 
 
 def set_sync_sqlalchemy_url_from_env():
-    # Ne calcule l'URL depuis .env que si alembic.ini n'en fournit pas déjà une
+    # Si alembic.ini fournit déjà sqlalchemy.url, on ne touche pas
     if config.get_main_option("sqlalchemy.url"):
-        # alembic.ini a priorité → ne rien faire
         return
+
     url_str = settings.DATABASE_URL or os.getenv("DATABASE_URL")
     if not url_str:
         return
+
     url = make_url(url_str)
     if "asyncpg" in url.drivername:
         url = url.set(drivername="postgresql+psycopg")

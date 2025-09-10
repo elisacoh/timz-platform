@@ -1,69 +1,90 @@
-name: CI
+name: Backend CI
 
 on:
   push:
-    branches: [main, dev]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/ci.yml'
   pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/ci.yml'
 
 jobs:
-  test:
+  tests:
     runs-on: ubuntu-latest
 
+    # Postgres de CI
     services:
       postgres:
         image: postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: timz_test
+          POSTGRES_DB: postgres
         ports:
-          - 5433:5432
+          - 5432:5432
         options: >-
           --health-cmd="pg_isready -U postgres"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=5
+          --health-retries=10
+
+    strategy:
+      matrix:
+        python-version: ['3.11']  # tu peux ajouter '3.12', '3.13' si tu veux
 
     env:
-      # Test DB runs on service-mapped 5433
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5433/timz_test
+      # Env test – aligne avec tes fixtures conftest.py
+      APP_ENV: test
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/timz_test
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/timz_test
       JWT_SECRET: testsecret
-      TZ: Asia/Jerusalem
-
-    defaults:
-      run:
-        working-directory: backend
+      REFRESH_TOKEN_PEPPER: superpepper
+      ACCESS_TTL_MIN: '1'
+      REFRESH_TTL_DAYS: '1'
+      FIREBASE_PROJECT_ID: timz-platform
+      # (si tu utilises d’autres settings dans Settings(), ajoute-les ici)
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
 
       - name: Install Poetry
-        run: pipx install poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
 
-      - name: Cache Poetry virtualenv
+      - name: Cache Poetry venv
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/pypoetry
-            ~/.cache/pip
-            backend/.venv
-          key: ${{ runner.os }}-poetry-${{ hashFiles('backend/pyproject.toml', 'backend/poetry.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-poetry-
+          path: backend/.venv
+          key: ${{ runner.os }}-poetry-${{ matrix.python-version }}-${{ hashFiles('backend/poetry.lock') }}
+
+      - name: Install system deps (psql client)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
 
       - name: Install deps
-        run: poetry install
+        working-directory: backend
+        run: poetry install --no-interaction --no-ansi
 
-      # Optional: apply DB migrations if your tests need tables later
-      # - name: Alembic upgrade head
-      #   run: poetry run alembic upgrade head
+      - name: Wait for Postgres & create test DB
+        env:
+          PGPASSWORD: postgres
+        run: |
+          until pg_isready -h 127.0.0.1 -p 5432 -U postgres; do sleep 1; done
+          psql -h 127.0.0.1 -p 5432 -U postgres -c 'CREATE DATABASE "timz_test";' || true
 
-      - name: Lint
-        run: poetry run make lint
-
-      - name: Tests
-        run: poetry run make test
+      - name: Run tests
+        working-directory: backend
+        run: poetry run pytest -q
